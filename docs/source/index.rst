@@ -9,7 +9,3 @@ Trinityx is a fork of the Edx platform (edx.org) for Trinity University.
 
    devstack
    docs
-
-
-* :ref:`genindex`
-
