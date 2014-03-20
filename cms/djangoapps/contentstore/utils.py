@@ -35,13 +35,11 @@ def delete_course_and_groups(course_id, commit=False):
     module_store = modulestore('direct')
     content_store = contentstore()
 
-    org, course_num, _ = course_id.split("/")
-    module_store.ignore_write_events_on_courses.append('{0}/{1}'.format(org, course_num))
+    course_id_dict = Location.parse_course_id(course_id)
+    module_store.ignore_write_events_on_courses.append('{org}/{course}'.format(**course_id_dict))
 
     loc = CourseDescriptor.id_to_location(course_id)
     if delete_course(module_store, content_store, loc, commit):
-        print 'removing forums permissions and roles...'
-        unseed_permissions_roles(course_id)
 
         print 'removing User permissions from course....'
         # in the django layer, we need to remove all the user permissions groups associated with this course
@@ -143,7 +141,7 @@ def get_lms_link_for_item(location, preview=False, course_id=None):
         else:
             lms_base = settings.LMS_BASE
 
-        lms_link = "//{lms_base}/courses/{course_id}/jump_to/{location}".format(
+        lms_link = u"//{lms_base}/courses/{course_id}/jump_to/{location}".format(
             lms_base=lms_base,
             course_id=course_id,
             location=Location(location)
@@ -179,7 +177,7 @@ def get_lms_link_for_about_page(location):
         about_base = None
 
     if about_base is not None:
-        lms_link = "//{about_base_url}/courses/{course_id}/about".format(
+        lms_link = u"//{about_base_url}/courses/{course_id}/about".format(
             about_base_url=about_base,
             course_id=Location(location).course_id
         )
@@ -191,45 +189,40 @@ def get_lms_link_for_about_page(location):
 
 def course_image_url(course):
     """Returns the image url for the course."""
-    loc = course.location._replace(tag='c4x', category='asset', name=course.course_image)
+    loc = StaticContent.compute_location(course.location.org, course.location.course, course.course_image)
     path = StaticContent.get_url_path_from_location(loc)
     return path
 
 
-class UnitState(object):
+class PublishState(object):
+    """
+    The publish state for a given xblock-- either 'draft', 'private', or 'public'.
+
+    Currently in CMS, an xblock can only be in 'draft' or 'private' if it is at or below the Unit level.
+    """
     draft = 'draft'
     private = 'private'
     public = 'public'
 
 
-def compute_unit_state(unit):
+def compute_publish_state(xblock):
     """
-    Returns whether this unit is 'draft', 'public', or 'private'.
+    Returns whether this xblock is 'draft', 'public', or 'private'.
 
     'draft' content is in the process of being edited, but still has a previous
         version visible in the LMS
     'public' content is locked and visible in the LMS
-    'private' content is editabled and not visible in the LMS
+    'private' content is editable and not visible in the LMS
     """
 
-    if getattr(unit, 'is_draft', False):
+    if getattr(xblock, 'is_draft', False):
         try:
-            modulestore('direct').get_item(unit.location)
-            return UnitState.draft
+            modulestore('direct').get_item(xblock.location)
+            return PublishState.draft
         except ItemNotFoundError:
-            return UnitState.private
+            return PublishState.private
     else:
-        return UnitState.public
-
-
-def update_item(location, value):
-    """
-    If value is None, delete the db entry. Otherwise, update it using the correct modulestore.
-    """
-    if value is None:
-        get_modulestore(location).delete_item(location)
-    else:
-        get_modulestore(location).update_item(location, value)
+        return PublishState.public
 
 
 def add_extra_panel_tab(tab_type, course):

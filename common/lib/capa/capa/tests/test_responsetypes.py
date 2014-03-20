@@ -13,7 +13,7 @@ import textwrap
 import requests
 import mock
 
-from . import new_loncapa_problem, test_system
+from . import new_loncapa_problem, test_capa_system
 import calc
 
 from capa.responsetypes import LoncapaProblemError, \
@@ -37,9 +37,9 @@ class ResponseTest(unittest.TestCase):
         if self.xml_factory_class:
             self.xml_factory = self.xml_factory_class()
 
-    def build_problem(self, system=None, **kwargs):
+    def build_problem(self, capa_system=None, **kwargs):
         xml = self.xml_factory.build_xml(**kwargs)
-        return new_loncapa_problem(xml, system=system)
+        return new_loncapa_problem(xml, capa_system=capa_system)
 
     def assert_grade(self, problem, submission, expected_correctness, msg=None):
         input_dict = {'1_2_1': submission}
@@ -564,6 +564,10 @@ class StringResponseTest(ResponseTest):
         problem = self.build_problem(answer=".*tre+", case_sensitive=False, regexp=True)
         self.assert_grade(problem, "There is a tree", "correct")
 
+        # test with case_sensitive not specified
+        problem = self.build_problem(answer=".*tre+", regexp=True)
+        self.assert_grade(problem, "There is a tree", "correct")
+
         answers = [
             "Martin Luther King Junior",
             "Doctor Martin Luther King Junior",
@@ -611,6 +615,7 @@ class StringResponseTest(ResponseTest):
         self.assert_grade(problem, u"î", "incorrect")
         self.assert_grade(problem, u"o", "incorrect")
 
+
     def test_backslash_and_unicode_regexps(self):
         """
         Test some special cases of [unicode] regexps.
@@ -643,26 +648,39 @@ class StringResponseTest(ResponseTest):
 
     def test_case_sensitive(self):
         # Test single answer
-        problem = self.build_problem(answer="Second", case_sensitive=True)
+        problem_specified = self.build_problem(answer="Second", case_sensitive=True)
 
-        # Exact string should be correct
-        self.assert_grade(problem, "Second", "correct")
+        # should also be case_sensitive if case sensitivity is not specified
+        problem_not_specified = self.build_problem(answer="Second")
+        problems = [problem_specified, problem_not_specified]
 
-        # Other strings and the lowercase version of the string are incorrect
-        self.assert_grade(problem, "Other String", "incorrect")
-        self.assert_grade(problem, "second", "incorrect")
+        for problem in problems:
+            # Exact string should be correct
+            self.assert_grade(problem, "Second", "correct")
+
+            # Other strings and the lowercase version of the string are incorrect
+            self.assert_grade(problem, "Other String", "incorrect")
+            self.assert_grade(problem, "second", "incorrect")
 
         # Test multiple answers
         answers = ["Second", "Third", "Fourth"]
-        problem = self.build_problem(answer="sample_answer", case_sensitive=True, additional_answers=answers)
 
-        for answer in answers:
-            # Exact string should be correct
-            self.assert_grade(problem, answer, "correct")
+        # set up problems
+        problem_specified = self.build_problem(
+            answer="sample_answer", case_sensitive=True, additional_answers=answers
+        )
+        problem_not_specified = self.build_problem(
+            answer="sample_answer", additional_answers=answers
+        )
+        problems = [problem_specified, problem_not_specified]
+        for problem in problems:
+            for answer in answers:
+                # Exact string should be correct
+                self.assert_grade(problem, answer, "correct")
 
-        # Other strings and the lowercase version of the string are incorrect
-        self.assert_grade(problem, "Other String", "incorrect")
-        self.assert_grade(problem, "second", "incorrect")
+            # Other strings and the lowercase version of the string are incorrect
+            self.assert_grade(problem, "Other String", "incorrect")
+            self.assert_grade(problem, "second", "incorrect")
 
     def test_bogus_escape_not_raised(self):
         """
@@ -980,6 +998,59 @@ class CodeResponseTest(ResponseTest):
             self.assertEquals(answers_converted['1_3_1'], ['answer1', 'answer2', 'answer3'])
             self.assertEquals(answers_converted['1_4_1'], [fp.name, fp.name])
 
+    def test_parse_score_msg_of_responder(self):
+        """
+        Test whether LoncapaProblem._parse_score_msg correcly parses valid HTML5 html.
+        """
+        valid_grader_msgs = [
+            u'<span>MESSAGE</span>',  # Valid XML
+            textwrap.dedent("""
+                <div class='matlabResponse'><div id='mwAudioPlaceHolder'>
+                <audio controls autobuffer autoplay src='data:audio/wav;base64='>Audio is not supported on this browser.</audio>
+                <div>Right click <a href=https://endpoint.mss-mathworks.com/media/filename.wav>here</a> and click \"Save As\" to download the file</div></div>
+                <div style='white-space:pre' class='commandWindowOutput'></div><ul></ul></div>
+            """).replace('\n', ''),  # Valid HTML5 real case Matlab response, invalid XML
+            '<aaa></bbb>'  # Invalid XML, but will be parsed by html5lib to <aaa/>
+        ]
+
+        invalid_grader_msgs = [
+            '<audio',  # invalid XML and HTML5
+        ]
+
+        answer_ids = sorted(self.problem.get_question_answers())
+
+        # CodeResponse requires internal CorrectMap state. Build it now in the queued state
+        old_cmap = CorrectMap()
+        for i, answer_id in enumerate(answer_ids):
+            queuekey = 1000 + i
+            queuestate = CodeResponseTest.make_queuestate(queuekey, datetime.now(UTC))
+            old_cmap.update(CorrectMap(answer_id=answer_ids[i], queuestate=queuestate))
+
+        for grader_msg in valid_grader_msgs:
+            correct_score_msg = json.dumps({'correct': True, 'score': 1, 'msg': grader_msg})
+            incorrect_score_msg = json.dumps({'correct': False, 'score': 0, 'msg': grader_msg})
+            xserver_msgs = {'correct': correct_score_msg, 'incorrect': incorrect_score_msg, }
+
+            for i, answer_id in enumerate(answer_ids):
+                self.problem.correct_map = CorrectMap()
+                self.problem.correct_map.update(old_cmap)
+                output = self.problem.update_score(xserver_msgs['correct'], queuekey=1000 + i)
+                self.assertEquals(output[answer_id]['msg'], grader_msg)
+
+        for grader_msg in invalid_grader_msgs:
+            correct_score_msg = json.dumps({'correct': True, 'score': 1, 'msg': grader_msg})
+            incorrect_score_msg = json.dumps({'correct': False, 'score': 0, 'msg': grader_msg})
+            xserver_msgs = {'correct': correct_score_msg, 'incorrect': incorrect_score_msg, }
+
+            for i, answer_id in enumerate(answer_ids):
+                self.problem.correct_map = CorrectMap()
+                self.problem.correct_map.update(old_cmap)
+
+                output = self.problem.update_score(xserver_msgs['correct'], queuekey=1000 + i)
+                self.assertEquals(output[answer_id]['msg'], u'Invalid grader reply. Please contact the course staff.')
+
+
+
 
 class ChoiceResponseTest(ResponseTest):
     from capa.tests.response_xml_factory import ChoiceResponseXMLFactory
@@ -1022,10 +1093,10 @@ class JavascriptResponseTest(ResponseTest):
         coffee_file_path = os.path.dirname(__file__) + "/test_files/js/*.coffee"
         os.system("node_modules/.bin/coffee -c %s" % (coffee_file_path))
 
-        system = test_system()
-        system.can_execute_unsafe_code = lambda: True
+        capa_system = test_capa_system()
+        capa_system.can_execute_unsafe_code = lambda: True
         problem = self.build_problem(
-            system=system,
+            capa_system=capa_system,
             generator_src="test_problem_generator.js",
             grader_src="test_problem_grader.js",
             display_class="TestProblemDisplay",
@@ -1040,12 +1111,12 @@ class JavascriptResponseTest(ResponseTest):
     def test_cant_execute_javascript(self):
         # If the system says to disallow unsafe code execution, then making
         # this problem will raise an exception.
-        system = test_system()
-        system.can_execute_unsafe_code = lambda: False
+        capa_system = test_capa_system()
+        capa_system.can_execute_unsafe_code = lambda: False
 
         with self.assertRaises(LoncapaProblemError):
             self.build_problem(
-                system=system,
+                capa_system=capa_system,
                 generator_src="test_problem_generator.js",
                 grader_src="test_problem_grader.js",
                 display_class="TestProblemDisplay",
@@ -1061,6 +1132,50 @@ class NumericalResponseTest(ResponseTest):
     # We blend the line between integration (using evaluator) and exclusively
     # unit testing the NumericalResponse (mocking out the evaluator)
     # For simple things its not worth the effort.
+
+    def test_grade_range_tolerance(self):
+        problem_setup = [
+            # [given_asnwer, [list of correct responses], [list of incorrect responses]]
+            ['[5, 7)', ['5', '6', '6.999'], ['4.999', '7']],
+            ['[1.6e-5, 1.9e24)', ['0.000016', '1.6*10^-5', '1.59e24'], ['1.59e-5', '1.9e24', '1.9*10^24']],
+            ['[0, 1.6e-5]', ['1.6*10^-5'], ["2"]],
+            ['(1.6e-5, 10]', ["2"], ['1.6*10^-5']],
+        ]
+        for given_answer, correct_responses, incorrect_responses in problem_setup:
+            problem = self.build_problem(answer=given_answer)
+            self.assert_multiple_grade(problem, correct_responses, incorrect_responses)
+
+    def test_grade_range_tolerance_exceptions(self):
+        # no complex number in range tolerance staff answer
+        problem = self.build_problem(answer='[1j, 5]')
+        input_dict = {'1_2_1': '3'}
+        with self.assertRaises(StudentInputError):
+            problem.grade_answers(input_dict)
+
+        # no complex numbers in student ansers to range tolerance problems
+        problem = self.build_problem(answer='(1, 5)')
+        input_dict = {'1_2_1': '1*J'}
+        with self.assertRaises(StudentInputError):
+            problem.grade_answers(input_dict)
+
+        # test isnan student input: no exception,
+        # but problem should be graded as incorrect
+        problem = self.build_problem(answer='(1, 5)')
+        input_dict = {'1_2_1': ''}
+        correct_map = problem.grade_answers(input_dict)
+        correctness = correct_map.get_correctness('1_2_1')
+        self.assertEqual(correctness, 'incorrect')
+
+        # test invalid range tolerance answer
+        with self.assertRaises(StudentInputError):
+            problem = self.build_problem(answer='(1 5)')
+
+        # test empty boundaries
+        problem = self.build_problem(answer='(1, ]')
+        input_dict = {'1_2_1': '3'}
+        with self.assertRaises(StudentInputError):
+            problem.grade_answers(input_dict)
+
     def test_grade_exact(self):
         problem = self.build_problem(answer=4)
         correct_responses = ["4", "4.0", "4.00"]
@@ -1084,17 +1199,17 @@ class NumericalResponseTest(ResponseTest):
         Default tolerance for all responsetypes is 1e-3%.
         """
         problem_setup = [
-          #[given_asnwer, [list of correct responses], [list of incorrect responses]]
-            [1, ["1"], ["1.1"],],
-            [2.0, ["2.0"], ["1.0"],],
-            [4, ["4.0", "4.00004"],  ["4.00005"]],
+            # [given_answer, [list of correct responses], [list of incorrect responses]]
+            [1, ["1"], ["1.1"]],
+            [2.0, ["2.0"], ["1.0"]],
+            [4, ["4.0", "4.00004"], ["4.00005"]],
             [0.00016, ["1.6*10^-4"], [""]],
             [0.000016, ["1.6*10^-5"], ["0.000165"]],
             [1.9e24, ["1.9*10^24"], ["1.9001*10^24"]],
             [2e-15, ["2*10^-15"], [""]],
             [3141592653589793238., ["3141592653589793115."], [""]],
-            [0.1234567,  ["0.123456", "0.1234561"], ["0.123451"]],
-            [1e-5,  ["1e-5", "1.0e-5"], ["-1e-5", "2*1e-5"]],
+            [0.1234567, ["0.123456", "0.1234561"], ["0.123451"]],
+            [1e-5, ["1e-5", "1.0e-5"], ["-1e-5", "2*1e-5"]],
         ]
         for given_answer, correct_responses, incorrect_responses in problem_setup:
             problem = self.build_problem(answer=given_answer)
@@ -1139,6 +1254,24 @@ class NumericalResponseTest(ResponseTest):
         mock_log.debug.assert_called_once_with(
             "Content error--answer '%s' is not a valid number", staff_ans
         )
+
+    @mock.patch('capa.responsetypes.log')
+    def test_responsetype_i18n(self, mock_log):
+        """Test that LoncapaSystem has an i18n that works."""
+        staff_ans = "clearly bad syntax )[+1e"
+        problem = self.build_problem(answer=staff_ans, tolerance=1e-3)
+
+        class FakeTranslations(object):
+            """A fake gettext.Translations object."""
+            def ugettext(self, text):
+                """Return the 'translation' of `text`."""
+                if text == "There was a problem with the staff answer to this problem.":
+                    text = "TRANSLATED!"
+                return text
+        problem.capa_system.i18n = FakeTranslations()
+
+        with self.assertRaisesRegexp(StudentInputError, "TRANSLATED!"):
+            self.assert_grade(problem, '1+j', 'correct')
 
     def test_grade_infinity(self):
         """

@@ -28,24 +28,9 @@ class MemberListWidget
     template_html = $("#member-list-widget-template").html()
     @$container.html Mustache.render template_html, params
 
-    # bind info toggle
-    @$('.info-badge').click => @toggle_info()
-
     # bind add button
     @$('input[type="button"].add').click =>
       params.add_handler? @$('.add-field').val()
-
-  show_info: ->
-      @$('.info').show()
-      @$('.member-list').hide()
-
-  show_list: ->
-      @$('.info').hide()
-      @$('.member-list').show()
-
-  toggle_info: ->
-      @$('.info').toggle()
-      @$('.member-list').toggle()
 
   # clear the input text field
   clear_input: -> @$('.add-field').val ''
@@ -84,8 +69,8 @@ class AuthListWidget extends MemberListWidget
     super $container,
       title: $container.data 'display-name'
       info: $container.data 'info-text'
-      labels: ["username", "email", "revoke access"]
-      add_placeholder: "Enter email"
+      labels: ["Username", "Email", "Revoke access"]
+      add_placeholder: "Enter username or email"
       add_btn_label: $container.data 'add-button-label'
       add_handler: (input) => @add_handler input
 
@@ -102,8 +87,6 @@ class AuthListWidget extends MemberListWidget
     @clear_errors()
     @clear_input()
     @reload_list()
-    @$('.info').hide()
-    @$('.member-list').show()
 
   # handle clicks on the add button
   add_handler: (input) ->
@@ -115,20 +98,17 @@ class AuthListWidget extends MemberListWidget
         @clear_input()
         @reload_list()
     else
-      @show_errors "Enter an email."
+      @show_errors gettext "Please enter a username or email."
 
   # reload the list of members
   reload_list: ->
     # @clear_rows()
-    # @show_info()
     @get_member_list (error, member_list) =>
       # abort on error
       return @show_errors error unless error is null
 
       # only show the list of there are members
       @clear_rows()
-      @show_info()
-      # @show_info()
 
       # use _.each instead of 'for' so that member
       # is bound in the button callback.
@@ -136,17 +116,15 @@ class AuthListWidget extends MemberListWidget
         # if there are members, show the list
 
         # create revoke button and insert it into the row
-        $revoke_btn = $ '<div/>',
+        $revoke_btn = $ '<div class="revoke"><i class="icon-remove-sign"></i> Revoke access</div>',
           class: 'revoke'
-          click: =>
+        $revoke_btn.click =>
             @modify_member_access member.email, 'revoke', (error) =>
               # abort on error
               return @show_errors error unless error is null
               @clear_errors()
               @reload_list()
         @add_row [member.username, member.email, $revoke_btn]
-        # make sure the list is shown because there are members.
-        @show_list()
 
   # clear error display
   clear_errors: -> @$error_section?.text ''
@@ -162,22 +140,24 @@ class AuthListWidget extends MemberListWidget
       url: @list_endpoint
       data: rolename: @rolename
       success: (data) => cb? null, data[@rolename]
-      error: std_ajax_err => cb? "Error fetching list for role '#{@rolename}'"
+      error: std_ajax_err => 
+        `// Translators: A rolename appears this sentence.`
+        cb? gettext("Error fetching list for role") + " '#{@rolename}'"
 
   # send ajax request to modify access
   # (add or remove them from the list)
   # `action` can be 'allow' or 'revoke'
   # `cb` is called with cb(error, data)
-  modify_member_access: (email, action, cb) ->
+  modify_member_access: (unique_student_identifier, action, cb) ->
     $.ajax
       dataType: 'json'
       url: @modify_endpoint
       data:
-        email: email
+        unique_student_identifier: unique_student_identifier
         rolename: @rolename
         action: action
       success: (data) => cb? null, data
-      error: std_ajax_err => cb? "Error changing user's permissions."
+      error: std_ajax_err => cb? gettext "Error changing user's permissions."
 
 
 # Wrapper for the batch enrollment subsection.
@@ -226,7 +206,7 @@ class BatchEnrollment
         url: @$btn_unenroll.data 'endpoint'
         data: send_data
         success: (data) => @display_response data
-        error: std_ajax_err => @fail_with_error "Error enrolling/unenrolling students."
+        error: std_ajax_err => @fail_with_error gettext "Error enrolling/unenrolling students."
 
 
   fail_with_error: (msg) ->
@@ -293,7 +273,7 @@ class BatchEnrollment
           allowed.push student_results
 
       # The instructor is trying to unenroll someone who is not enrolled or allowed to enroll; non-sensical action.
-      else if data_from_server.action is 'unenroll' and not (student_results.before.enrollment) and not (student_results.before.allowed) 
+      else if data_from_server.action is 'unenroll' and not (student_results.before.enrollment) and not (student_results.before.allowed)
         notunenrolled.push student_results
 
       else if not student_results.after.enrollment
@@ -332,37 +312,45 @@ class BatchEnrollment
       render_list gettext("Successfully enrolled and sent email to the following students:"), (sr.email for sr in enrolled)
 
     if enrolled.length and not emailStudents
+      `// Translators: A list of students appears after this sentence.`
       render_list gettext("Successfully enrolled the following students:"), (sr.email for sr in enrolled)
 
     # Student hasn't registered so we allow them to enroll
     if allowed.length and emailStudents
+      `// Translators: A list of students appears after this sentence.`
       render_list gettext("Successfully sent enrollment emails to the following students. They will be allowed to enroll once they register:"),
         (sr.email for sr in allowed)
 
     # Student hasn't registered so we allow them to enroll
     if allowed.length and not emailStudents
+      `// Translators: A list of students appears after this sentence.`
       render_list gettext("These students will be allowed to enroll once they register:"),
         (sr.email for sr in allowed)
 
     # Student hasn't registered so we allow them to enroll with autoenroll
     if autoenrolled.length and emailStudents
+      `// Translators: A list of students appears after this sentence.`
       render_list gettext("Successfully sent enrollment emails to the following students. They will be enrolled once they register:"),
         (sr.email for sr in autoenrolled)
 
     # Student hasn't registered so we allow them to enroll with autoenroll
     if autoenrolled.length and not emailStudents
+      `// Translators: A list of students appears after this sentence.`
       render_list gettext("These students will be enrolled once they register:"),
         (sr.email for sr in autoenrolled)
 
     if notenrolled.length and emailStudents
+      `// Translators: A list of students appears after this sentence.`
       render_list gettext("Emails successfully sent. The following students are no longer enrolled in the course:"),
         (sr.email for sr in notenrolled)
 
     if notenrolled.length and not emailStudents
+      `// Translators: A list of students appears after this sentence.`
       render_list gettext("The following students are no longer enrolled in the course:"),
         (sr.email for sr in notenrolled)
 
     if notunenrolled.length
+      `// Translators: A list of students appears after this sentence.`
       render_list gettext("These students were not affliliated with the course so could not be unenrolled:"),
         (sr.email for sr in notunenrolled)
 
@@ -473,7 +461,7 @@ class AuthList
         rolename: @rolename
         action: action
       success: (data) -> cb?(data)
-      error: std_ajax_err => @$request_response_error.text "Error changing user's permissions."
+      error: std_ajax_err => @$request_response_error.text gettext "Error changing user's permissions."
 
 
 # Membership Section

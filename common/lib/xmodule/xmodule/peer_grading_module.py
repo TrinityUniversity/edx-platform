@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 
 EXTERNAL_GRADER_NO_CONTACT_ERROR = "Failed to contact external graders.  Please notify course staff."
+MAX_ALLOWED_FEEDBACK_LENGTH = 5000
 
 
 class PeerGradingFields(object):
@@ -96,15 +97,13 @@ class PeerGradingModule(PeerGradingFields, XModule):
     _VERSION = 1
 
     js = {
-        'js': [
-            resource_string(__name__, 'js/src/peergrading/ice.min.js'),
-        ],
         'coffee': [
             resource_string(__name__, 'js/src/peergrading/peer_grading.coffee'),
             resource_string(__name__, 'js/src/peergrading/peer_grading_problem.coffee'),
-            resource_string(__name__, 'js/src/peergrading/track_changes.coffee'),
-            resource_string(__name__, 'js/src/collapsible.coffee'),
             resource_string(__name__, 'js/src/javascript_loader.coffee'),
+        ],
+        'js': [
+            resource_string(__name__, 'js/src/collapsible.js'),
         ]
     }
     js_module_name = "PeerGrading"
@@ -258,7 +257,7 @@ class PeerGradingModule(PeerGradingFields, XModule):
             count_graded = self.student_data_for_location['count_graded']
             count_required = self.student_data_for_location['count_required']
         except:
-            success, response = self.query_data_for_location(self.location)
+            success, response = self.query_data_for_location(self.link_to_location)
             if not success:
                 log.exception(
                     "No instance data found and could not get data from controller for loc {0} student {1}".format(
@@ -345,6 +344,10 @@ class PeerGradingModule(PeerGradingFields, XModule):
         if data.get("submission_flagged", False) in ["false", False, "False", "FALSE"]:
             required.append("rubric_scores[]")
         success, message = self._check_required(data, set(required))
+        if not success:
+            return self._err_response(message)
+
+        success, message = self._check_feedback_length(data)
         if not success:
             return self._err_response(message)
 
@@ -624,7 +627,6 @@ class PeerGradingModule(PeerGradingFields, XModule):
             'ajax_url': ajax_url,
             # Checked above
             'staff_access': False,
-            'track_changes': getattr(module, 'track_changes', False),
             'use_single_location': self.use_for_single_location_local,
         })
 
@@ -642,6 +644,15 @@ class PeerGradingModule(PeerGradingFields, XModule):
         }
 
         return json.dumps(state)
+
+    def _check_feedback_length(self, data):
+        feedback = data.get("feedback")
+        if feedback and len(feedback) > MAX_ALLOWED_FEEDBACK_LENGTH:
+            return False, "Feedback is too long, Max length is {0} characters.".format(
+                MAX_ALLOWED_FEEDBACK_LENGTH
+            )
+        else:
+            return True, ""
 
 
 class PeerGradingDescriptor(PeerGradingFields, RawDescriptor):
@@ -697,6 +708,7 @@ class PeerGradingDescriptor(PeerGradingFields, RawDescriptor):
     closed = module_attr('closed')
     get_instance_state = module_attr('get_instance_state')
     get_next_submission = module_attr('get_next_submission')
+    graded = module_attr('graded')
     is_student_calibrated = module_attr('is_student_calibrated')
     peer_grading = module_attr('peer_grading')
     peer_grading_closed = module_attr('peer_grading_closed')
@@ -706,4 +718,5 @@ class PeerGradingDescriptor(PeerGradingFields, RawDescriptor):
     save_calibration_essay = module_attr('save_calibration_essay')
     save_grade = module_attr('save_grade')
     show_calibration_essay = module_attr('show_calibration_essay')
+    use_for_single_location_local = module_attr('use_for_single_location_local')
     _find_corresponding_module_for_location = module_attr('_find_corresponding_module_for_location')

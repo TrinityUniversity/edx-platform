@@ -6,21 +6,27 @@ import yaml
 from functools import partial
 from lxml import etree
 from collections import namedtuple
-from pkg_resources import resource_listdir, resource_string, resource_isdir
+from pkg_resources import (
+    resource_exists,
+    resource_listdir,
+    resource_string,
+    resource_isdir,
+)
 from webob import Response
 from webob.multidict import MultiDict
 
 from xblock.core import XBlock
-from xblock.fields import Scope, Integer, Float, List, XBlockMixin, String
+from xblock.fields import Scope, Integer, Float, List, XBlockMixin, String, Dict
 from xblock.fragment import Fragment
 from xblock.plugin import default_select
-from xblock.runtime import Runtime, MemoryIdManager
+from xblock.runtime import Runtime
 from xmodule.fields import RelativeTime
 
 from xmodule.errortracker import exc_info_to_str
 from xmodule.modulestore import Location
 from xmodule.modulestore.exceptions import ItemNotFoundError, InsufficientSpecificationError, InvalidLocationError
 from xmodule.modulestore.locator import BlockUsageLocator
+from xmodule.exceptions import UndefinedContext
 
 
 log = logging.getLogger(__name__)
@@ -137,6 +143,13 @@ class XModuleMixin(XBlockMixin):
     )
 
     @property
+    def system(self):
+        """
+        Return the XBlock runtime (backwards compatibility alias provided for XModules).
+        """
+        return self.runtime
+
+    @property
     def course_id(self):
         return self.runtime.course_id
 
@@ -205,6 +218,31 @@ class XModuleMixin(XBlockMixin):
         self.save()
         return self._field_data._kvs  # pylint: disable=protected-access
 
+    def get_content_titles(self):
+        """
+        Returns list of content titles for all of self's children.
+
+                         SEQUENCE
+                            |
+                         VERTICAL
+                        /        \
+                 SPLIT_TEST      DISCUSSION
+                /        \
+           VIDEO A      VIDEO B
+
+        Essentially, this function returns a list of display_names (e.g. content titles)
+        for all of the leaf nodes.  In the diagram above, calling get_content_titles on
+        SEQUENCE would return the display_names of `VIDEO A`, `VIDEO B`, and `DISCUSSION`.
+
+        This is most obviously useful for sequence_modules, which need this list to display
+        tooltips to users, though in theory this should work for any tree that needs
+        the display_names of all its leaf nodes.
+        """
+        if self.has_children:
+            return sum((child.get_content_titles() for child in self.get_children()), [])
+        else:
+            return [self.display_name_with_default]
+
     def get_children(self):
         """Returns a list of XBlock instances for the children of
         this module"""
@@ -217,8 +255,9 @@ class XModuleMixin(XBlockMixin):
             for child_loc in self.children:
                 try:
                     child = self.runtime.get_block(child_loc)
+                    child.runtime.export_fs = self.runtime.export_fs
                 except ItemNotFoundError:
-                    log.exception('Unable to load item {loc}, skipping'.format(loc=child_loc))
+                    log.exception(u'Unable to load item {loc}, skipping'.format(loc=child_loc))
                     continue
                 self._child_instances.append(child)
 
@@ -261,6 +300,16 @@ class XModuleMixin(XBlockMixin):
         Return a css class identifying this module in the context of an icon
         """
         return self.icon_class
+
+    def has_dynamic_children(self):
+        """
+        Returns True if this descriptor has dynamic children for a given
+        student when the module is created.
+
+        Returns False if the children of this descriptor are the same
+        children that the module will return for any student.
+        """
+        return False
 
     # Functions used in the LMS
 
@@ -394,7 +443,6 @@ class XModule(XModuleMixin, HTMLSnippet, XBlock):  # pylint: disable=abstract-me
         self.descriptor = descriptor
         super(XModule, self).__init__(*args, **kwargs)
         self._loaded_children = None
-        self.system = self.runtime
         self.runtime.xmodule_instance = self
 
     def __unicode__(self):
@@ -508,6 +556,8 @@ class ResourceTemplates(object):
     Gets the templates associated w/ a containing cls. The cls must have a 'template_dir_name' attribute.
     It finds the templates as directly in this directory under 'templates'.
     """
+    template_packages = [__name__]
+
     @classmethod
     def templates(cls):
         """
@@ -520,15 +570,17 @@ class ResourceTemplates(object):
         templates = []
         dirname = cls.get_template_dir()
         if dirname is not None:
-            for template_file in resource_listdir(__name__, dirname):
-                if not template_file.endswith('.yaml'):
-                    log.warning("Skipping unknown template file %s", template_file)
+            for pkg in cls.template_packages:
+                if not resource_isdir(pkg, dirname):
                     continue
-                template_content = resource_string(__name__, os.path.join(dirname, template_file))
-                template = yaml.safe_load(template_content)
-                template['template_id'] = template_file
-                templates.append(template)
-
+                for template_file in resource_listdir(pkg, dirname):
+                    if not template_file.endswith('.yaml'):
+                        log.warning("Skipping unknown template file %s", template_file)
+                        continue
+                    template_content = resource_string(pkg, os.path.join(dirname, template_file))
+                    template = yaml.safe_load(template_content)
+                    template['template_id'] = template_file
+                    templates.append(template)
         return templates
 
     @classmethod
@@ -536,7 +588,7 @@ class ResourceTemplates(object):
         if getattr(cls, 'template_dir_name', None):
             dirname = os.path.join('templates', cls.template_dir_name)
             if not resource_isdir(__name__, dirname):
-                log.warning("No resource directory {dir} found when loading {cls_name} templates".format(
+                log.warning(u"No resource directory {dir} found when loading {cls_name} templates".format(
                     dir=dirname,
                     cls_name=cls.__name__,
                 ))
@@ -555,31 +607,13 @@ class ResourceTemplates(object):
         """
         dirname = cls.get_template_dir()
         if dirname is not None:
-            try:
-                template_content = resource_string(__name__, os.path.join(dirname, template_id))
-            except IOError:
-                return None
-            template = yaml.safe_load(template_content)
-            template['template_id'] = template_id
-            return template
-        else:
-            return None
-
-
-def prefer_xmodules(identifier, entry_points):
-    """Prefer entry_points from the xmodule package"""
-    from_xmodule = [entry_point for entry_point in entry_points if entry_point.dist.key == 'xmodule']
-    if from_xmodule:
-        return default_select(identifier, from_xmodule)
-    else:
-        return default_select(identifier, entry_points)
-
-
-def only_xmodules(identifier, entry_points):
-    """Only use entry_points that are supplied by the xmodule package"""
-    from_xmodule = [entry_point for entry_point in entry_points if entry_point.dist.key == 'xmodule']
-
-    return default_select(identifier, from_xmodule)
+            path = os.path.join(dirname, template_id)
+            for pkg in cls.template_packages:
+                if resource_exists(pkg, path):
+                    template_content = resource_string(pkg, path)
+                    template = yaml.safe_load(template_content)
+                    template['template_id'] = template_id
+                    return template
 
 
 @XBlock.needs("i18n")
@@ -626,23 +660,12 @@ class XModuleDescriptor(XModuleMixin, HTMLSnippet, ResourceTemplates, XBlock):
         XModuleDescriptor.__init__ takes the same arguments as xblock.core:XBlock.__init__
         """
         super(XModuleDescriptor, self).__init__(*args, **kwargs)
-        self.system = self.runtime
         # update_version is the version which last updated this xblock v prev being the penultimate updater
         # leaving off original_version since it complicates creation w/o any obv value yet and is computable
         # by following previous until None
         # definition_locator is only used by mongostores which separate definitions from blocks
         self.edited_by = self.edited_on = self.previous_version = self.update_version = self.definition_locator = None
         self.xmodule_runtime = None
-
-    def has_dynamic_children(self):
-        """
-        Returns True if this descriptor has dynamic children for a given
-        student when the module is created.
-
-        Returns False if the children of this descriptor are the same
-        children that the module will return for any student.
-        """
-        return False
 
     @classmethod
     def _translate(cls, key):
@@ -677,6 +700,21 @@ class XModuleDescriptor(XModuleMixin, HTMLSnippet, ResourceTemplates, XBlock):
 
         """
         raise NotImplementedError('Modules must implement from_xml to be parsable from xml')
+
+    def add_xml_to_node(self, node):
+        """
+        Export this :class:`XModuleDescriptor` as XML, by setting attributes on the provided
+        `node`.
+        """
+        xml_string = self.export_to_xml(self.runtime.export_fs)
+        exported_node = etree.fromstring(xml_string)
+        node.tag = exported_node.tag
+        node.text = exported_node.text
+        node.tail = exported_node.tail
+        for key, value in exported_node.items():
+            node.set(key, value)
+
+        node.extend(list(exported_node))
 
     def export_to_xml(self, resource_fs):
         """
@@ -767,6 +805,8 @@ class XModuleDescriptor(XModuleMixin, HTMLSnippet, ResourceTemplates, XBlock):
                 editor_type = "Float"
             elif isinstance(field, List):
                 editor_type = "List"
+            elif isinstance(field, Dict):
+                editor_type = "Dict"
             elif isinstance(field, RelativeTime):
                 editor_type = "RelativeTime"
             metadata_fields[field.name]['type'] = editor_type
@@ -781,7 +821,8 @@ class XModuleDescriptor(XModuleMixin, HTMLSnippet, ResourceTemplates, XBlock):
         Returns the XModule corresponding to this descriptor. Expects that the system
         already supports all of the attributes needed by xmodules
         """
-        assert self.xmodule_runtime is not None
+        if self.xmodule_runtime is None:
+            raise UndefinedContext()
         assert self.xmodule_runtime.error_descriptor_class is not None
         if self.xmodule_runtime.xmodule_instance is None:
             try:
@@ -866,8 +907,21 @@ class ConfigurableFragmentWrapper(object):  # pylint: disable=abstract-method
 # This function exists to give applications (LMS/CMS) a place to monkey-patch until
 # we can refactor modulestore to split out the FieldData half of its interface from
 # the Runtime part of its interface. This function matches the Runtime.handler_url interface
-def descriptor_global_handler_url(block, handler_name, suffix='', query='', thirdparty=False):
-    raise NotImplementedError("Applications must monkey-patch this function before using handler-urls for studio_view")
+def descriptor_global_handler_url(block, handler_name, suffix='', query='', thirdparty=False):  # pylint: disable=invalid-name, unused-argument
+    """
+    See :meth:`xblock.runtime.Runtime.handler_url`.
+    """
+    raise NotImplementedError("Applications must monkey-patch this function before using handler_url for studio_view")
+
+
+# This function exists to give applications (LMS/CMS) a place to monkey-patch until
+# we can refactor modulestore to split out the FieldData half of its interface from
+# the Runtime part of its interface. This function matches the Runtime.local_resource_url interface
+def descriptor_global_local_resource_url(block, uri):  # pylint: disable=invalid-name, unused-argument
+    """
+    See :meth:`xblock.runtime.Runtime.local_resource_url`.
+    """
+    raise NotImplementedError("Applications must monkey-patch this function before using local_resource_url for studio_view")
 
 
 class DescriptorSystem(ConfigurableFragmentWrapper, Runtime):  # pylint: disable=abstract-method
@@ -916,8 +970,13 @@ class DescriptorSystem(ConfigurableFragmentWrapper, Runtime):  # pylint: disable
         get_policy: a function that takes a usage id and returns a dict of
             policy to apply.
 
+        local_resource_url: an implementation of :meth:`xblock.runtime.Runtime.local_resource_url`
+
         """
         super(DescriptorSystem, self).__init__(**kwargs)
+
+        # This is used by XModules to write out separate files during xml export
+        self.export_fs = None
 
         self.load_item = load_item
         self.resources_fs = resources_fs
@@ -980,11 +1039,36 @@ class DescriptorSystem(ConfigurableFragmentWrapper, Runtime):  # pylint: disable
             # global function that the application can override.
             return descriptor_global_handler_url(block, handler_name, suffix, query, thirdparty)
 
-    def resources_url(self, resource):
+    def local_resource_url(self, block, uri):
+        """
+        See :meth:`xblock.runtime.Runtime:local_resource_url` for documentation.
+        """
+        xmodule_runtime = getattr(block, 'xmodule_runtime', None)
+        if xmodule_runtime is not None:
+            return xmodule_runtime.local_resource_url(block, uri)
+        else:
+            # Currently, Modulestore is responsible for instantiating DescriptorSystems
+            # This means that LMS/CMS don't have a way to define a subclass of DescriptorSystem
+            # that implements the correct local_resource_url. So, for now, instead, we will reference a
+            # global function that the application can override.
+            return descriptor_global_local_resource_url(block, uri)
+
+    def resource_url(self, resource):
+        """
+        See :meth:`xblock.runtime.Runtime:resource_url` for documentation.
+        """
         raise NotImplementedError("edX Platform doesn't currently implement XBlock resource urls")
 
-    def local_resource_url(self, block, uri):
-        raise NotImplementedError("edX Platform doesn't currently implement XBlock resource urls")
+    def publish(self, block, event):
+        """
+        See :meth:`xblock.runtime.Runtime:publish` for documentation.
+        """
+        raise NotImplementedError("edX Platform doesn't currently implement XBlock publish")
+
+    def add_block_as_child_node(self, block, node):
+        child = etree.SubElement(node, "unknown")
+        child.set('url_name', block.url_name)
+        block.add_xml_to_node(child)
 
 
 class XMLParsingSystem(DescriptorSystem):
@@ -1012,13 +1096,13 @@ class ModuleSystem(ConfigurableFragmentWrapper, Runtime):  # pylint: disable=abs
     """
     def __init__(
             self, static_url, track_function, get_module, render_template,
-            replace_urls, user=None, filestore=None,
+            replace_urls, descriptor_runtime, user=None, filestore=None,
             debug=False, hostname="", xqueue=None, publish=None, node_path="",
             anonymous_student_id='', course_id=None,
             open_ended_grading_interface=None, s3_interface=None,
             cache=None, can_execute_unsafe_code=None, replace_course_urls=None,
             replace_jump_to_id_urls=None, error_descriptor_class=None, get_real_user=None,
-            field_data=None,
+            field_data=None, get_user_role=None,
             **kwargs):
         """
         Create a closure around the system environment.
@@ -1053,6 +1137,8 @@ class ModuleSystem(ConfigurableFragmentWrapper, Runtime):  # pylint: disable=abs
                          that capa_module can use to fix up the static urls in
                          ajax results.
 
+        descriptor_runtime - A `DescriptorSystem` to use for loading xblocks by id
+
         anonymous_student_id - Used for tracking modules with student id
 
         course_id - the course_id containing this module
@@ -1070,6 +1156,9 @@ class ModuleSystem(ConfigurableFragmentWrapper, Runtime):  # pylint: disable=abs
 
         get_real_user - function that takes `anonymous_student_id` and returns real user_id,
         associated with `anonymous_student_id`.
+
+        get_user_role - A function that returns user role. Implementation is different
+            for LMS and Studio.
 
         field_data - the `FieldData` to use for backing XBlock storage.
         """
@@ -1093,10 +1182,8 @@ class ModuleSystem(ConfigurableFragmentWrapper, Runtime):  # pylint: disable=abs
         self.course_id = course_id
         self.user_is_staff = user is not None and user.is_staff
 
-        if publish is None:
-            publish = lambda e: None
-
-        self.publish = publish
+        if publish:
+            self.publish = publish
 
         self.open_ended_grading_interface = open_ended_grading_interface
         self.s3_interface = s3_interface
@@ -1109,6 +1196,9 @@ class ModuleSystem(ConfigurableFragmentWrapper, Runtime):  # pylint: disable=abs
         self.xmodule_instance = None
 
         self.get_real_user = get_real_user
+
+        self.get_user_role = get_user_role
+        self.descriptor_runtime = descriptor_runtime
 
     def get(self, attr):
         """	provide uniform access to attributes (like etree)."""
@@ -1133,13 +1223,13 @@ class ModuleSystem(ConfigurableFragmentWrapper, Runtime):  # pylint: disable=abs
         return self.handler_url(self.xmodule_instance, 'xmodule_handler', '', '').rstrip('/?')
 
     def get_block(self, block_id):
-        raise NotImplementedError("XModules must use get_module to load other modules")
+        return self.get_module(self.descriptor_runtime.get_block(block_id))
 
-    def resources_url(self, resource):
+    def resource_url(self, resource):
         raise NotImplementedError("edX Platform doesn't currently implement XBlock resource urls")
 
-    def local_resource_url(self, block, uri):
-        raise NotImplementedError("edX Platform doesn't currently implement XBlock resource urls")
+    def publish(self, block, event):
+        pass
 
 
 class DoNothingCache(object):

@@ -5,7 +5,6 @@ Settings for bok choy tests
 import os
 from path import path
 
-
 CONFIG_ROOT = path(__file__).abspath().dirname()  #pylint: disable=E1120
 TEST_ROOT = CONFIG_ROOT.dirname().dirname() / "test_root"
 
@@ -37,6 +36,12 @@ MONGO_MODULESTORE['OPTIONS']['fs_root'] = (TEST_ROOT / "data").abspath()
 # Configure XML modulestore to use test root data dir
 XML_MODULESTORE = MODULESTORE['default']['OPTIONS']['stores']['xml']
 XML_MODULESTORE['OPTIONS']['data_dir'] = (TEST_ROOT / "data").abspath()
+
+# Configure the LMS to use our stub XQueue implementation
+XQUEUE_INTERFACE['url'] = 'http://localhost:8040'
+
+# Configure the LMS to use our stub ORA implementation
+OPEN_ENDED_GRADING_INTERFACE['url'] = 'http://localhost:8041/'
 
 # Enable django-pipeline and staticfiles
 STATIC_ROOT = (TEST_ROOT / "staticfiles").abspath()

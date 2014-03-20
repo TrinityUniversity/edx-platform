@@ -16,11 +16,6 @@ from .common import *
 from logsettings import get_logger_config
 
 DEBUG = True
-USE_I18N = True
-# For displaying the dummy text, we need to provide a language mapping.
-LANGUAGES = (
-    ('eo', 'Esperanto'),
-)
 TEMPLATE_DEBUG = True
 
 FEATURES['DISABLE_START_DATES'] = False
@@ -207,7 +202,7 @@ OPENID_PROVIDER_TRUSTED_ROOTS = ['*']
 
 ######################## MIT Certificates SSL Auth ############################
 
-FEATURES['AUTH_USE_MIT_CERTIFICATES'] = False
+FEATURES['AUTH_USE_CERTIFICATES'] = False
 
 ################################# CELERY ######################################
 
@@ -284,9 +279,11 @@ CC_PROCESSOR['CyberSource']['PURCHASE_ENDPOINT'] = os.environ.get('CYBERSOURCE_P
 ########################## USER API ########################
 EDX_API_KEY = None
 
-
 ####################### Shoppingcart ###########################
 FEATURES['ENABLE_SHOPPING_CART'] = True
+
+### This enables the Metrics tab for the Instructor dashboard ###########
+FEATURES['CLASS_DASHBOARD'] = True
 
 #####################################################################
 # Lastly, see if the developer has any local overrides.

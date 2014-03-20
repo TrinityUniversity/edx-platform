@@ -8,6 +8,7 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods
 from django_future.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
+from django.conf import settings
 
 from edxmako.shortcuts import render_to_response
 from cache_toolbox.core import del_cached_content
@@ -16,13 +17,13 @@ from xmodule.contentstore.django import contentstore
 from xmodule.modulestore.django import modulestore
 from xmodule.modulestore import Location
 from xmodule.contentstore.content import StaticContent
-from xmodule.util.date_utils import get_default_time_display
 from xmodule.modulestore import InvalidLocationError
 from xmodule.exceptions import NotFoundError
 from django.core.exceptions import PermissionDenied
 from xmodule.modulestore.django import loc_mapper
 from xmodule.modulestore.locator import BlockUsageLocator
 
+from util.date_utils import get_default_time_display
 from util.json_request import JsonResponse
 from django.http import HttpResponseNotFound
 from django.utils.translation import ugettext as _
@@ -290,10 +291,12 @@ def _get_asset_json(display_name, date, location, thumbnail_location, locked):
     Helper method for formatting the asset information to send to client.
     """
     asset_url = StaticContent.get_url_path_from_location(location)
+    external_url = settings.LMS_BASE + asset_url
     return {
         'display_name': display_name,
         'date_added': get_default_time_display(date),
         'url': asset_url,
+        'external_url': external_url,
         'portable_url': StaticContent.get_static_path_from_location(location),
         'thumbnail': StaticContent.get_url_path_from_location(thumbnail_location) if thumbnail_location is not None else None,
         'locked': locked,

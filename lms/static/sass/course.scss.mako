@@ -2,8 +2,8 @@
 
 @import 'base/reset';
 @import 'base/font_face';
-@import 'base/mixins';
 @import 'base/variables';
+@import 'base/mixins';
 
 ## THEMING
 ## -------
@@ -22,6 +22,10 @@
 @import 'base/extends';
 @import 'base/animations';
 @import 'shared/tooltips';
+
+// base - elements
+@import 'elements/typography';
+@import 'elements/controls';
 
 // Course base / layout styles
 @import 'course/layout/courseware_header';

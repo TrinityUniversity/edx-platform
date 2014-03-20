@@ -88,13 +88,12 @@ class SequenceModule(SequenceFields, XModule):
             rendered_child = child.render('student_view', context)
             fragment.add_frag_resources(rendered_child)
 
+            titles = child.get_content_titles()
+            print titles
             childinfo = {
                 'content': rendered_child.content,
-                'title': "\n".join(
-                    grand_child.display_name
-                    for grand_child in child.get_children()
-                    if grand_child.display_name is not None
-                ),
+                'title': "\n".join(titles),
+                'page_title': titles[0] if titles else '',
                 'progress_status': Progress.to_js_status_str(progress),
                 'progress_detail': Progress.to_js_detail_str(progress),
                 'type': child.get_icon_class(),
@@ -150,6 +149,5 @@ class SequenceDescriptor(SequenceFields, MakoModuleDescriptor, XmlDescriptor):
     def definition_to_xml(self, resource_fs):
         xml_object = etree.Element('sequential')
         for child in self.get_children():
-            xml_object.append(
-                etree.fromstring(child.export_to_xml(resource_fs)))
+            self.runtime.add_block_as_child_node(child, xml_object)
         return xml_object

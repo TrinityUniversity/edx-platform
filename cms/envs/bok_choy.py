@@ -17,7 +17,6 @@ os.environ['CONFIG_ROOT'] = path(__file__).abspath().dirname()  #pylint: disable
 
 from .aws import *  # pylint: disable=W0401, W0614
 
-
 ######################### Testing overrides ####################################
 
 # Needed for the `reset_db` management command

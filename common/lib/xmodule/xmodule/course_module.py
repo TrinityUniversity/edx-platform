@@ -9,11 +9,12 @@ import dateutil.parser
 from lazy import lazy
 
 from xmodule.modulestore import Location
+from xmodule.partitions.partitions import UserPartition
 from xmodule.seq_module import SequenceDescriptor, SequenceModule
 from xmodule.graders import grader_from_conf
 import json
 
-from xblock.fields import Scope, List, String, Dict, Boolean
+from xblock.fields import Scope, List, String, Dict, Boolean, Integer
 from .fields import Date
 from xmodule.modulestore.locator import CourseLocator
 from django.utils.timezone import UTC
@@ -156,10 +157,29 @@ class TextbookList(List):
         return json_data
 
 
+class UserPartitionList(List):
+    """Special List class for listing UserPartitions"""
+    def from_json(self, values):
+        return [UserPartition.from_json(v) for v in values]
+
+    def to_json(self, values):
+        return [user_partition.to_json()
+                for user_partition in values]
+
+
 class CourseFields(object):
     lti_passports = List(help="LTI tools passports as id:client_key:client_secret", scope=Scope.settings)
     textbooks = TextbookList(help="List of pairs of (title, url) for textbooks used in this course",
                              default=[], scope=Scope.content)
+
+    # This field is intended for Studio to update, not to be exposed directly via
+    # advanced_settings.
+    user_partitions = UserPartitionList(
+        help="List of user partitions of this course into groups, used e.g. for experiments",
+        default=[],
+        scope=Scope.content
+    )
+
     wiki_slug = String(help="Slug that points to the wiki for this course", scope=Scope.content)
     enrollment_start = Date(help="Date that enrollment for this class is opened", scope=Scope.settings)
     enrollment_end = Date(help="Date that enrollment for this class is closed", scope=Scope.settings)
@@ -355,6 +375,18 @@ class CourseFields(object):
         default="images_course_image.jpg"
     )
 
+    ## Course level Certificate Name overrides.
+    cert_name_short = String(
+        help="Sitewide name of completion statements given to students (short).",
+        scope=Scope.settings,
+        default=""
+    )
+    cert_name_long = String(
+        help="Sitewide name of completion statements given to students (long).",
+        scope=Scope.settings,
+        default=""
+    )
+
     # An extra property is used rather than the wiki_slug/number because
     # there are courses that change the number for different runs. This allows
     # courses to share the same css_class across runs even if they have
@@ -364,7 +396,7 @@ class CourseFields(object):
     # way to add in course-specific styling. There needs to be a discussion
     # about the right way to do this, but arjun will address this ASAP. Also
     # note that the courseware template needs to change when this is removed.
-    css_class = String(help="DO NOT USE THIS", scope=Scope.settings)
+    css_class = String(help="DO NOT USE THIS", scope=Scope.settings, default="")
 
     # TODO: This is a quick kludge to allow CS50 (and other courses) to
     # specify their own discussion forums as external links by specifying a
@@ -384,6 +416,13 @@ class CourseFields(object):
     display_coursenumber = String(help="An optional display string for the course number that will get rendered in the LMS",
                                   scope=Scope.settings)
 
+    max_student_enrollments_allowed = Integer(help="Limit the number of students allowed to enroll in this course.",
+                                              scope=Scope.settings)
+
+    allow_public_wiki_access = Boolean(help="Whether to allow an unenrolled user to view the Wiki",
+                                       default=False,
+                                       scope=Scope.settings)
+
 class CourseDescriptor(CourseFields, SequenceDescriptor):
     module_class = SequenceModule
 
@@ -392,6 +431,7 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
         Expects the same arguments as XModuleDescriptor.__init__
         """
         super(CourseDescriptor, self).__init__(*args, **kwargs)
+        _ = self.runtime.service(self, "i18n").ugettext
 
         if self.wiki_slug is None:
             if isinstance(self.location, Location):
@@ -404,7 +444,7 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
             # set the due_date_display_format to what would have been shown previously (with no timezone).
             # Then remove show_timezone so that if the user clears out the due_date_display_format,
             # they get the default date display.
-            self.due_date_display_format = u"%b %d, %Y at %H:%M"
+            self.due_date_display_format = "DATE_TIME"
             delattr(self, 'show_timezone')
 
         # NOTE: relies on the modulestore to call set_grading_policy() right after
@@ -419,8 +459,9 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
         self._grading_policy = {}
 
         self.set_grading_policy(self.grading_policy)
+
         if self.discussion_topics == {}:
-            self.discussion_topics = {'General': {'id': self.location.html_id()}}
+            self.discussion_topics = {_('General'): {'id': self.location.html_id()}}
 
         # TODO check that this is still needed here and can't be by defaults.
         if not self.tabs:
@@ -428,7 +469,8 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
             # first arg, since that's only used for dispatch
             tabs = []
             tabs.append({'type': 'courseware'})
-            tabs.append({'type': 'course_info', 'name': 'Course Info'})
+            # Translators: "Course Info" is the name of the course's information and updates page
+            tabs.append({'type': 'course_info', 'name': _('Course Info')})
 
             if self.syllabus_present:
                 tabs.append({'type': 'syllabus'})
@@ -441,12 +483,15 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
             if self.discussion_link:
                 tabs.append({'type': 'external_discussion', 'link': self.discussion_link})
             else:
-                tabs.append({'type': 'discussion', 'name': 'Discussion'})
+                # Translators: "Discussion" is the title of the course forum page
+                tabs.append({'type': 'discussion', 'name': _('Discussion')})
 
-            tabs.append({'type': 'wiki', 'name': 'Wiki'})
+            # Translators: "Wiki" is the title of the course's wiki page
+            tabs.append({'type': 'wiki', 'name': _('Wiki')})
 
             if not self.hide_progress_tab:
-                tabs.append({'type': 'progress', 'name': 'Progress'})
+                # Translators: "Progress" is the title of the student's grade information page
+                tabs.append({'type': 'progress', 'name': _('Progress')})
 
             self.tabs = tabs
 
@@ -557,6 +602,11 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
                 textbook_xml_object.set('book_url', textbook.book_url)
 
             xml_object.append(textbook_xml_object)
+
+        if self.wiki_slug is not None:
+            wiki_xml_object = etree.Element('wiki')
+            wiki_xml_object.set('slug', self.wiki_slug)
+            xml_object.append(wiki_xml_object)
 
         return xml_object
 
@@ -770,7 +820,10 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
                     xmoduledescriptors.append(s)
 
                     # The xmoduledescriptors included here are only the ones that have scores.
-                    section_description = {'section_descriptor': s, 'xmoduledescriptors': filter(lambda child: child.has_score, xmoduledescriptors)}
+                    section_description = {
+                        'section_descriptor': s,
+                        'xmoduledescriptors': filter(lambda child: child.has_score, xmoduledescriptors)
+                    }
 
                     section_format = s.format if s.format is not None else ''
                     graded_sections[section_format] = graded_sections.get(section_format, []) + [section_description]
@@ -790,8 +843,10 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
         '''Convert the given course_id (org/course/name) to a location object.
         Throws ValueError if course_id is of the wrong format.
         '''
-        org, course, name = course_id.split('/')
-        return Location('i4x', org, course, 'course', name)
+        course_id_dict = Location.parse_course_id(course_id)
+        course_id_dict['tag'] = 'i4x'
+        course_id_dict['category'] = 'course'
+        return Location(course_id_dict)
 
     @staticmethod
     def location_to_id(location):
@@ -812,13 +867,21 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
 
     @property
     def start_date_text(self):
+        """
+        Returns the desired text corresponding the course's start date.  Prefers .advertised_start,
+        then falls back to .start
+        """
+        i18n = self.runtime.service(self, "i18n")
+        _ = i18n.ugettext
+        strftime = i18n.strftime
+
         def try_parse_iso_8601(text):
             try:
                 result = Date().from_json(text)
                 if result is None:
                     result = text.title()
                 else:
-                    result = result.strftime("%b %d, %Y")
+                    result = strftime(result, "SHORT_DATE")
             except ValueError:
                 result = text.title()
 
@@ -826,11 +889,21 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
 
         if isinstance(self.advertised_start, basestring):
             return try_parse_iso_8601(self.advertised_start)
-        elif self.advertised_start is None and self.start is None:
-            # TODO this is an impossible state since the init function forces start to have a value
-            return 'TBD'
+        elif self.start_date_is_still_default:
+            # Translators: TBD stands for 'To Be Determined' and is used when a course
+            # does not yet have an announced start date.
+            return _('TBD')
         else:
-            return (self.advertised_start or self.start).strftime("%b %d, %Y")
+            when = self.advertised_start or self.start
+            return strftime(when, "SHORT_DATE")
+
+    @property
+    def start_date_is_still_default(self):
+        """
+        Checks if the start date set for the course is still default, i.e. .start has not been modified,
+        and .advertised_start has not been set.
+        """
+        return self.advertised_start is None and self.start == CourseFields.start.default
 
     @property
     def end_date_text(self):
@@ -839,7 +912,11 @@ class CourseDescriptor(CourseFields, SequenceDescriptor):
 
         If the course does not have an end date set (course.end is None), an empty string will be returned.
         """
-        return '' if self.end is None else self.end.strftime("%b %d, %Y")
+        if self.end is None:
+            return ''
+        else:
+            strftime = self.runtime.service(self, "i18n").strftime
+            return strftime(self.end, "SHORT_DATE")
 
     @property
     def forum_posts_allowed(self):

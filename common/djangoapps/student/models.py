@@ -11,7 +11,7 @@ file and check it in at the same time as your model changes. To do that,
 3. Add the migration file created in edx-platform/common/djangoapps/student/migrations/
 """
 import crum
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 import logging
@@ -29,6 +29,8 @@ from django.dispatch import receiver, Signal
 import django.dispatch
 from django.forms import ModelForm, forms
 from django.core.exceptions import ObjectDoesNotExist
+from django.utils.translation import ugettext_noop
+from django_countries import CountryField
 from track import contexts
 from track.views import server_track
 from eventtracking import tracker
@@ -188,7 +190,12 @@ class UserProfile(models.Model):
     this_year = datetime.now(UTC).year
     VALID_YEARS = range(this_year, this_year - 120, -1)
     year_of_birth = models.IntegerField(blank=True, null=True, db_index=True)
-    GENDER_CHOICES = (('m', 'Male'), ('f', 'Female'), ('o', 'Other'))
+    GENDER_CHOICES = (
+        ('m', ugettext_noop('Male')),
+        ('f', ugettext_noop('Female')),
+        # Translators: 'Other' refers to the student's gender
+        ('o', ugettext_noop('Other'))
+    )
     gender = models.CharField(
         blank=True, null=True, max_length=6, db_index=True, choices=GENDER_CHOICES
     )
@@ -198,21 +205,25 @@ class UserProfile(models.Model):
     # ('p_se', 'Doctorate in science or engineering'),
     # ('p_oth', 'Doctorate in another field'),
     LEVEL_OF_EDUCATION_CHOICES = (
-        ('p', 'Doctorate'),
-        ('m', "Master's or professional degree"),
-        ('b', "Bachelor's degree"),
-        ('a', "Associate's degree"),
-        ('hs', "Secondary/high school"),
-        ('jhs', "Junior secondary/junior high/middle school"),
-        ('el', "Elementary/primary school"),
-        ('none', "None"),
-        ('other', "Other")
+        ('p', ugettext_noop('Doctorate')),
+        ('m', ugettext_noop("Master's or professional degree")),
+        ('b', ugettext_noop("Bachelor's degree")),
+        ('a', ugettext_noop("Associate's degree")),
+        ('hs', ugettext_noop("Secondary/high school")),
+        ('jhs', ugettext_noop("Junior secondary/junior high/middle school")),
+        ('el', ugettext_noop("Elementary/primary school")),
+        # Translators: 'None' refers to the student's level of education
+        ('none', ugettext_noop("None")),
+        # Translators: 'Other' refers to the student's level of education
+        ('other', ugettext_noop("Other"))
     )
     level_of_education = models.CharField(
         blank=True, null=True, max_length=6, db_index=True,
         choices=LEVEL_OF_EDUCATION_CHOICES
     )
     mailing_address = models.TextField(blank=True, null=True)
+    city = models.TextField(blank=True, null=True)
+    country = CountryField(blank=True, null=True)
     goals = models.TextField(blank=True, null=True)
     allow_certificate = models.BooleanField(default=1)
 
@@ -284,6 +295,68 @@ class PendingEmailChange(models.Model):
 
 EVENT_NAME_ENROLLMENT_ACTIVATED = 'edx.course.enrollment.activated'
 EVENT_NAME_ENROLLMENT_DEACTIVATED = 'edx.course.enrollment.deactivated'
+
+
+class LoginFailures(models.Model):
+    """
+    This model will keep track of failed login attempts
+    """
+    user = models.ForeignKey(User)
+    failure_count = models.IntegerField(default=0)
+    lockout_until = models.DateTimeField(null=True)
+
+    @classmethod
+    def is_feature_enabled(cls):
+        """
+        Returns whether the feature flag around this functionality has been set
+        """
+        return settings.FEATURES['ENABLE_MAX_FAILED_LOGIN_ATTEMPTS']
+
+    @classmethod
+    def is_user_locked_out(cls, user):
+        """
+        Static method to return in a given user has his/her account locked out
+        """
+        try:
+            record = LoginFailures.objects.get(user=user)
+            if not record.lockout_until:
+                return False
+
+            now = datetime.now(UTC)
+            until = record.lockout_until
+            is_locked_out = until and now < until
+
+            return is_locked_out
+        except ObjectDoesNotExist:
+            return False
+
+    @classmethod
+    def increment_lockout_counter(cls, user):
+        """
+        Ticks the failed attempt counter
+        """
+        record, _ = LoginFailures.objects.get_or_create(user=user)
+        record.failure_count = record.failure_count + 1
+        max_failures_allowed = settings.MAX_FAILED_LOGIN_ATTEMPTS_ALLOWED
+
+        # did we go over the limit in attempts
+        if record.failure_count >= max_failures_allowed:
+            # yes, then store when this account is locked out until
+            lockout_period_secs = settings.MAX_FAILED_LOGIN_ATTEMPTS_LOCKOUT_PERIOD_SECS
+            record.lockout_until = datetime.now(UTC) + timedelta(seconds=lockout_period_secs)
+
+        record.save()
+
+    @classmethod
+    def clear_lockout_counter(cls, user):
+        """
+        Removes the lockout counters (normally called after a successful login)
+        """
+        try:
+            entry = LoginFailures.objects.get(user=user)
+            entry.delete()
+        except ObjectDoesNotExist:
+            return
 
 
 class CourseEnrollment(models.Model):
@@ -358,6 +431,28 @@ class CourseEnrollment(models.Model):
             enrollment.save()
 
         return enrollment
+
+    @classmethod
+    def num_enrolled_in(cls, course_id):
+        """
+        Returns the count of active enrollments in a course.
+
+        'course_id' is the course_id to return enrollments
+        """
+        enrollment_number = CourseEnrollment.objects.filter(course_id=course_id, is_active=1).count()
+
+        return enrollment_number
+
+    @classmethod
+    def is_course_full(cls, course):
+        """
+        Returns a boolean value regarding whether a course has already reached it's max enrollment
+        capacity
+        """
+        is_course_full = False
+        if course.max_student_enrollments_allowed is not None:
+            is_course_full = cls.num_enrolled_in(course.location.course_id) >= course.max_student_enrollments_allowed
+        return is_course_full
 
     def update_enrollment(self, mode=None, is_active=None):
         """
@@ -758,10 +853,16 @@ def update_user_information(sender, instance, created, **kwargs):
 @receiver(user_logged_in)
 def log_successful_login(sender, request, user, **kwargs):
     """Handler to log when logins have occurred successfully."""
-    AUDIT_LOG.info(u"Login success - {0} ({1})".format(user.username, user.email))
+    if settings.FEATURES['SQUELCH_PII_IN_LOGS']:
+        AUDIT_LOG.info(u"Login success - user.id: {0}".format(user.id))
+    else:
+        AUDIT_LOG.info(u"Login success - {0} ({1})".format(user.username, user.email))
 
 
 @receiver(user_logged_out)
 def log_successful_logout(sender, request, user, **kwargs):
     """Handler to log when logouts have occurred successfully."""
-    AUDIT_LOG.info(u"Logout - {0}".format(request.user))
+    if settings.FEATURES['SQUELCH_PII_IN_LOGS']:
+        AUDIT_LOG.info(u"Logout - user.id: {0}".format(request.user.id))
+    else:
+        AUDIT_LOG.info(u"Logout - {0}".format(request.user))

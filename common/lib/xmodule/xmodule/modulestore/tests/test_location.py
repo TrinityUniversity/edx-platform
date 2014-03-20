@@ -19,6 +19,9 @@ GENERAL_PAIRS = [
 
 @ddt.ddt
 class TestLocations(TestCase):
+    """
+    Tests of :class:`.Location`
+    """
     @ddt.data(
         "tag://org/course/category/name",
         "tag://org/course/category/name@revision"
@@ -173,6 +176,8 @@ class TestLocations(TestCase):
             loc.course_id  # pylint: disable=pointless-statement
 
     def test_replacement(self):
+        # pylint: disable=protected-access
+
         self.assertEquals(
             Location('t://o/c/c/n@r')._replace(name='new_name'),
             Location('t://o/c/c/new_name@r'),
@@ -186,3 +191,15 @@ class TestLocations(TestCase):
         loc = Location('t://o/c/c/n@r')
         with self.assertRaises(AttributeError):
             setattr(loc, attr, attr)
+
+    def test_parse_course_id(self):
+        """
+        Test the parse_course_id class method
+        """
+        source_string = "myorg/mycourse/myrun"
+        parsed = Location.parse_course_id(source_string)
+        self.assertEqual(parsed['org'], 'myorg')
+        self.assertEqual(parsed['course'], 'mycourse')
+        self.assertEqual(parsed['name'], 'myrun')
+        with self.assertRaises(ValueError):
+            Location.parse_course_id('notlegit.id/foo')

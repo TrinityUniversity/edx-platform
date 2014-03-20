@@ -5,6 +5,7 @@ if Backbone?
       "click .home": "goHome"
       "click .browse": "toggleTopicDrop"
       "keydown .post-search-field": "performSearch"
+      "focus .post-search-field": "showSearch"
       "click .sort-bar a": "sortThreads"
       "click .browse-topic-drop-menu": "filterTopic"
       "click .browse-topic-drop-search-input": "ignoreClick"
@@ -173,6 +174,16 @@ if Backbone?
         content.addClass("resolved")
       if thread.get('read')
         content.addClass("read")
+      unreadCount = thread.get('unread_comments_count')
+      if unreadCount > 0
+        content.find('.comments-count').addClass("unread").attr(
+          "data-tooltip",
+          interpolate(
+            ngettext('%(unread_count)s new comment', '%(unread_count)s new comments', unreadCount),
+            {unread_count: thread.get('unread_comments_count')},
+            true
+          )
+        )
       @highlight(content)
 
 
@@ -209,7 +220,7 @@ if Backbone?
 
       @$(".search").addClass('is-open')
       @$(".browse").removeClass('is-open')
-      setTimeout (-> @$(".post-search-field").focus()), 200
+      setTimeout (-> @$(".post-search-field").focus()), 200 unless @$(".post-search-field").is(":focus")
 
     goHome: ->
       @template = _.template($("#discussion-home").html())
@@ -472,4 +483,4 @@ if Backbone?
           error: () =>
             $('input.email-setting').attr('checked','checked')
 
-          
+

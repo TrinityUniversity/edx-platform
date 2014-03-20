@@ -1,7 +1,6 @@
 import pytz
 from collections import defaultdict
 import logging
-import urllib
 from datetime import datetime
 
 from django.contrib.auth.models import User
@@ -12,7 +11,7 @@ from django.utils import simplejson
 from django_comment_common.models import Role, FORUM_ROLE_STUDENT
 from django_comment_client.permissions import check_permissions_by_view
 
-import edxmako
+from edxmako import lookup_template
 import pystache_custom as pystache
 
 from xmodule.modulestore.django import modulestore
@@ -206,7 +205,7 @@ class JsonResponse(HttpResponse):
 
 class JsonError(HttpResponse):
     def __init__(self, error_messages=[], status=400):
-        if isinstance(error_messages, str):
+        if isinstance(error_messages, basestring):
             error_messages = [error_messages]
         content = simplejson.dumps({'errors': error_messages},
                                    indent=2,
@@ -307,7 +306,7 @@ def get_metadata_for_threads(course_id, threads, user, user_info):
 
 
 def render_mustache(template_name, dictionary, *args, **kwargs):
-    template = edxmako.lookup['main'].get_template(template_name).source
+    template = lookup_template('main', template_name).source
     return pystache.render(template, dictionary)
 
 
@@ -362,7 +361,7 @@ def safe_content(content):
         'at_position_list', 'children', 'highlighted_title', 'highlighted_body',
         'courseware_title', 'courseware_url', 'unread_comments_count',
         'read', 'group_id', 'group_name', 'group_string', 'pinned', 'abuse_flaggers',
-        'stats'
+        'stats', 'resp_skip', 'resp_limit', 'resp_total',
 
     ]
 

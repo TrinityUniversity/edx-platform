@@ -251,14 +251,6 @@ class CombinedOpenEndedFields(object):
         default=False,
         scope=Scope.settings
     )
-    track_changes = Boolean(
-        display_name="Peer Track Changes",
-        help=("EXPERIMENTAL FEATURE FOR PEER GRADING ONLY:  "
-              "If set to 'True', peer graders will be able to make changes to the student "
-              "submission and those changes will be tracked and shown along with the graded feedback."),
-        default=False,
-        scope=Scope.settings
-    )
     due = Date(
         help="Date that this problem is due by",
         scope=Scope.settings
@@ -403,12 +395,13 @@ class CombinedOpenEndedModule(CombinedOpenEndedFields, XModule):
     icon_class = 'problem'
 
     js = {
-            'coffee':
-            [
-                resource_string(__name__, 'js/src/combinedopenended/display.coffee'),
-                resource_string(__name__, 'js/src/collapsible.coffee'),
-                resource_string(__name__, 'js/src/javascript_loader.coffee'),
-            ]
+        'coffee': [
+            resource_string(__name__, 'js/src/combinedopenended/display.coffee'),
+            resource_string(__name__, 'js/src/javascript_loader.coffee'),
+        ],
+        'js': [
+            resource_string(__name__, 'js/src/collapsible.js'),
+        ]
     }
     js_module_name = "CombinedOpenEnded"
 
@@ -517,7 +510,7 @@ class CombinedOpenEndedDescriptor(CombinedOpenEndedFields, RawDescriptor):
     def non_editable_metadata_fields(self):
         non_editable_fields = super(CombinedOpenEndedDescriptor, self).non_editable_metadata_fields
         non_editable_fields.extend([CombinedOpenEndedDescriptor.due, CombinedOpenEndedDescriptor.graceperiod,
-                                    CombinedOpenEndedDescriptor.markdown, CombinedOpenEndedDescriptor.version, CombinedOpenEndedDescriptor.track_changes])
+                                    CombinedOpenEndedDescriptor.markdown, CombinedOpenEndedDescriptor.version])
         return non_editable_fields
 
     # Proxy to CombinedOpenEndedModule so that external callers don't have to know if they're working

@@ -24,20 +24,20 @@ from xmodule.error_module import ErrorDescriptor
 from xmodule.modulestore.xml import LocationReader
 
 
+MODULE_DIR = path(__file__).dirname()
 # Location of common test DATA directory
 # '../../../../edx-platform/common/test/data/'
-MODULE_DIR = path(__file__).dirname()
-DATA_DIR = path.joinpath(*MODULE_DIR.splitall()[:-4]) / 'test/data/'
+DATA_DIR = MODULE_DIR.parent.parent.parent.parent / "test" / "data"
 
 
 open_ended_grading_interface = {
-        'url': 'blah/',
-        'username': 'incorrect_user',
-        'password': 'incorrect_pass',
-        'staff_grading' : 'staff_grading',
-        'peer_grading' : 'peer_grading',
-        'grading_controller' : 'grading_controller'
-    }
+    'url': 'blah/',
+    'username': 'incorrect_user',
+    'password': 'incorrect_pass',
+    'staff_grading': 'staff_grading',
+    'peer_grading': 'peer_grading',
+    'grading_controller': 'grading_controller',
+}
 
 
 class TestModuleSystem(ModuleSystem):  # pylint: disable=abstract-method
@@ -46,6 +46,9 @@ class TestModuleSystem(ModuleSystem):  # pylint: disable=abstract-method
     """
     def handler_url(self, block, handler, suffix='', query='', thirdparty=False):
         return str(block.scope_ids.usage_id) + '/' + handler + '/' + suffix + '?' + query
+
+    def local_resource_url(self, block, uri):
+        return 'resource/' + str(block.scope_ids.block_type) + '/' + uri
 
 
 def get_test_system(course_id=''):
@@ -77,6 +80,8 @@ def get_test_system(course_id=''):
         open_ended_grading_interface=open_ended_grading_interface,
         course_id=course_id,
         error_descriptor_class=ErrorDescriptor,
+        get_user_role=Mock(is_staff=False),
+        descriptor_runtime=get_test_descriptor_system(),
     )
 
 
@@ -111,7 +116,7 @@ class ModelsTest(unittest.TestCase):
 
     def test_load_class(self):
         vc = XModuleDescriptor.load_class('video')
-        vc_str = "<class 'xmodule.video_module.VideoDescriptor'>"
+        vc_str = "<class 'xmodule.video_module.video_module.VideoDescriptor'>"
         self.assertEqual(str(vc), vc_str)
 
 

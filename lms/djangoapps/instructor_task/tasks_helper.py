@@ -23,7 +23,7 @@ from courseware.grades import iterate_grades_for
 from courseware.models import StudentModule
 from courseware.model_data import FieldDataCache
 from courseware.module_render import get_module_for_descriptor_internal
-from instructor_task.models import GradesStore, InstructorTask, PROGRESS
+from instructor_task.models import ReportStore, InstructorTask, PROGRESS
 from student.models import CourseEnrollment
 
 # define different loggers for use within tasks and on client side
@@ -181,7 +181,7 @@ def run_main_task(entry_id, task_fcn, action_name):
     task_input = json.loads(entry.task_input)
 
     # construct log message:
-    fmt = 'task "{task_id}": course "{course_id}" input "{task_input}"'
+    fmt = u'task "{task_id}": course "{course_id}" input "{task_input}"'
     task_info_string = fmt.format(task_id=task_id, course_id=course_id, task_input=task_input)
 
     TASK_LOG.info('Starting update (nothing %s yet): %s', action_name, task_info_string)
@@ -190,7 +190,7 @@ def run_main_task(entry_id, task_fcn, action_name):
     # that is running.
     request_task_id = _get_current_task().request.id
     if task_id != request_task_id:
-        fmt = 'Requested task did not match actual task "{actual_id}": {task_info}'
+        fmt = u'Requested task did not match actual task "{actual_id}": {task_info}'
         message = fmt.format(actual_id=request_task_id, task_info=task_info_string)
         TASK_LOG.error(message)
         raise ValueError(message)
@@ -416,15 +416,15 @@ def rescore_problem_module_state(xmodule_instance_args, module_descriptor, stude
     if 'success' not in result:
         # don't consider these fatal, but false means that the individual call didn't complete:
         TASK_LOG.warning(u"error processing rescore call for course {course}, problem {loc} and student {student}: "
-                         "unexpected response {msg}".format(msg=result, course=course_id, loc=module_state_key, student=student))
+                         u"unexpected response {msg}".format(msg=result, course=course_id, loc=module_state_key, student=student))
         return UPDATE_STATUS_FAILED
     elif result['success'] not in ['correct', 'incorrect']:
         TASK_LOG.warning(u"error processing rescore call for course {course}, problem {loc} and student {student}: "
-                         "{msg}".format(msg=result['success'], course=course_id, loc=module_state_key, student=student))
+                         u"{msg}".format(msg=result['success'], course=course_id, loc=module_state_key, student=student))
         return UPDATE_STATUS_FAILED
     else:
         TASK_LOG.debug(u"successfully processed rescore call for course {course}, problem {loc} and student {student}: "
-                       "{msg}".format(msg=result['success'], course=course_id, loc=module_state_key, student=student))
+                       u"{msg}".format(msg=result['success'], course=course_id, loc=module_state_key, student=student))
         return UPDATE_STATUS_SUCCEEDED
 
 
@@ -473,11 +473,11 @@ def delete_problem_module_state(xmodule_instance_args, _module_descriptor, stude
 def push_grades_to_s3(_xmodule_instance_args, _entry_id, course_id, _task_input, action_name):
     """
     For a given `course_id`, generate a grades CSV file for all students that
-    are enrolled, and store using a `GradesStore`. Once created, the files can
-    be accessed by instantiating another `GradesStore` (via
-    `GradesStore.from_config()`) and calling `link_for()` on it. Writes are
+    are enrolled, and store using a `ReportStore`. Once created, the files can
+    be accessed by instantiating another `ReportStore` (via
+    `ReportStore.from_config()`) and calling `link_for()` on it. Writes are
     buffered, so we'll never write part of a CSV file to S3 -- i.e. any files
-    that are visible in GradesStore will be complete ones.
+    that are visible in ReportStore will be complete ones.
 
     As we start to add more CSV downloads, it will probably be worthwhile to
     make a more general CSVDoc class instead of building out the rows like we
@@ -555,18 +555,18 @@ def push_grades_to_s3(_xmodule_instance_args, _entry_id, course_id, _task_input,
     course_id_prefix = urllib.quote(course_id.replace("/", "_"))
 
     # Perform the actual upload
-    grades_store = GradesStore.from_config()
-    grades_store.store_rows(
+    report_store = ReportStore.from_config()
+    report_store.store_rows(
         course_id,
-        "{}_grade_report_{}.csv".format(course_id_prefix, timestamp_str),
+        u"{}_grade_report_{}.csv".format(course_id_prefix, timestamp_str),
         rows
     )
 
     # If there are any error rows (don't count the header), write them out as well
     if len(err_rows) > 1:
-        grades_store.store_rows(
+        report_store.store_rows(
             course_id,
-            "{}_grade_report_{}_err.csv".format(course_id_prefix, timestamp_str),
+            u"{}_grade_report_{}_err.csv".format(course_id_prefix, timestamp_str),
             err_rows
         )
 

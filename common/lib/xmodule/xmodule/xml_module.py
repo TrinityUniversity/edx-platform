@@ -6,8 +6,7 @@ import sys
 from lxml import etree
 
 from xblock.fields import Dict, Scope, ScopeIds
-from xmodule.x_module import XModuleDescriptor, policy_key
-from xmodule.modulestore import Location
+from xmodule.x_module import XModuleDescriptor
 from xmodule.modulestore.inheritance import own_metadata, InheritanceKeyValueStore
 from xmodule.modulestore.xml_exporter import EdxJSONEncoder
 from xblock.runtime import KvsFieldData
@@ -176,7 +175,7 @@ class XmlDescriptor(XModuleDescriptor):
         return etree.parse(file_object, parser=edx_xml_parser).getroot()
 
     @classmethod
-    def load_file(cls, filepath, fs, def_id):
+    def load_file(cls, filepath, fs, def_id):  # pylint: disable=invalid-name
         '''
         Open the specified file in fs, and call cls.file_to_xml on it,
         returning the lxml object.
@@ -184,8 +183,8 @@ class XmlDescriptor(XModuleDescriptor):
         Add details and reraise on error.
         '''
         try:
-            with fs.open(filepath) as file:
-                return cls.file_to_xml(file)
+            with fs.open(filepath) as xml_file:
+                return cls.file_to_xml(xml_file)
         except Exception as err:
             # Add info about where we are, but keep the traceback
             msg = 'Unable to load file contents at path %s for item %s: %s ' % (
@@ -364,6 +363,10 @@ class XmlDescriptor(XModuleDescriptor):
         resource_fs is a pyfilesystem object (from the fs package)
         """
 
+        # Set up runtime.export_fs so that it's available through future
+        # uses of the pure xblock add_xml_to_node api
+        self.runtime.export_fs = resource_fs
+
         # Get the definition
         xml_object = self.definition_to_xml(resource_fs)
         self.clean_metadata_from_xml(xml_object)
@@ -378,12 +381,11 @@ class XmlDescriptor(XModuleDescriptor):
                 val = serialize_field(self._field_data.get(self, attr))
                 try:
                     xml_object.set(attr, val)
-                except Exception, e:
+                except Exception:
                     logging.exception(
-                        u'Failed to serialize metadata attribute %s with value %s in module %s. This could mean data loss!!! Exception: %s',
-                        attr, val, self.url_name, e
+                        u'Failed to serialize metadata attribute %s with value %s in module %s. This could mean data loss!!!',
+                        attr, val, self.url_name
                     )
-                    pass
 
         for key, value in self.xml_attributes.items():
             if key not in self.metadata_to_strip:
