@@ -10,22 +10,39 @@ Prerequisites
 * `VirtualBox <https://www.virtualbox.org/>`_ (4.2.12 or newer)
 * `Vagrant <http://www.vagrantup.com/>`_ (1.4 or newer)
 
-Setup Vagrant
--------------
+Instructions
+------------
 Now that we have virtualbox and vagrant we can start working with platform. Create a working directory to store the project files::
 
     mkdir devstack
     cd devstack
 
-Download the Vagrantfile and start the virtual machine (via Vagrant). For more information on what is occuring during this step please visit the `vagrant documentation <http://docs.vagrantup.com/>`_ ::
+First we want to clone Trinityx so that our new development machine will use our fork instead of edx's code::
 
+    git clone https://github.com/TrinityUniversity/edx-platform.git
+
+Now we will download the Vagrantfile and start the virtual machine (via Vagrant). For more information on what is occuring during this step please visit the `vagrant documentation <http://docs.vagrantup.com/>`_ ::
+    
     wget https://raw.github.com/TrinityUniversity/edx-configuration/master/vagrant/release/devstack/Vagrantfile
-    vagrant up
+    vagrant up --no-provision
 
-This will create a virtual machine (guest) that will be fully provisioned to run the edx-platform. Any running of code or testing should be run inside of the guest. To access the guest run::
+.. note::
+    
+    Vagrant will provision your vm the first time you run `vagrant up`. To use Trinityx's fork, we need to ensure that this does not happen by using the `--no-provision` flag.    
+
+This will create a virtual machine (guest) but it won't be provisioned for the edx platform yet. Any running of code or testing should be run inside of the guest. To access the guest run::
 
     vagrant ssh
 
+We now need to modify the virtual machine so that it utilizes Trinity's configuration code. To do this we'll ssh into the machine and swap out the default configuration files with Trinityx's configuration repo::
+
+    vagrant ssh
+    sudo rm /edx/app/edx_ansible/edx_ansible/
+    git clone https://github.com/TrinityUniversity/edx-configuration /edx/app/edx_ansible/edx_ansible
+
+We are now ready to provision our machine (from the host)::
+    
+    vagrant provision
 
 Enable Preview
 --------------
@@ -33,32 +50,6 @@ Enable Preview
 To enable "preview" in studio you'll need to add the following line to your hosts (linux/mac - /etc/hosts, windows - C:\Windows\System32\drivers\etc\hosts)::
 
     192.168.33.10  preview.localhost`
-
-
-Use Trinityx Fork
------------------
-
-We now need to change the stack to use Trinity's fork of the edx-platform. First we need to remove the old code, I'd recommend doing this in the host OS to avoid annoying problems with the NFS server::
-    
-    sudo rm -rf /edx/app/edxapp/edx-platform/* 
-
-Then connect to the devstack::
-
-    vagrant ssh
-
-Add the following line to ``/edx/etc/server-vars.yml``::
-
-    edx_platform_repo: "https://github.com/TrinityUniversity/edx-platform.git"
-
-Now we're ready to update the edx-platform to use our forked repo::
-
-    vagrant reload
-    vagrant ssh
-    sudo /edx/bin/update edx-platform master
-
-.. note::
-
-    During updates the checking out of the code may take a long time.
 
 Usage
 =====
@@ -82,6 +73,13 @@ audit@example.com    edx      audit
 verified@example.com edx      verified
 ==================== ======== ========
 
+Updating
+========
+If you ever need to update the configuration or platform files from within the gues then the following commands are available::
+
+    sudo /edx/bin/update edx-platform master
+    sudo /edx/bin/update configuration master
+
 Development
 ===========
 During the configuration process, several directories were created inline with your Vagrantfile. These directories are checked out copies of the edx-platform components. Currently only 'edx-platform' is forked by Trinity.
@@ -97,7 +95,7 @@ Troubleshooting
 
 pymongo.errors.ConnectionFailure: could not connect to localhost:27017: [Errno 111] Connection refused
 ------------------------------------------------------------------------------------------------------
-If you see this error when attempting to run the server then you need to remove the lock and restart mongodb. This error usually occurs when the VM is not shutdown properly. To avoid this problem in the future, use one of the vagrant commands to suspend the VM (e.g. ``vagrant halt`` or ``vagrant suspend``). ::
+If you see this error when attempting to run the server then you need to remove the lock and restart mongodb. This error usually occurs when the VM is not shutdown properly. To avoid this problem in the future, use one of the vagrant commands to suspend the VM (e.g. ``vagrant halt`` or ``vagrant suspend``). To fix the problem::
             
             vagrant ssh
             sudo rm /edx/var/mongo/mongodb/mongod.lock
