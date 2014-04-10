@@ -37,8 +37,10 @@ This will create a virtual machine (guest) but it won't be provisioned for the e
 We now need to modify the virtual machine so that it utilizes Trinity's configuration code. To do this we'll ssh into the machine and swap out the default configuration files with Trinityx's configuration repo::
 
     vagrant ssh
-    sudo rm /edx/app/edx_ansible/edx_ansible/
-    git clone https://github.com/TrinityUniversity/edx-configuration /edx/app/edx_ansible/edx_ansible
+    sudo rm -r /edx/app/edx_ansible/edx_ansible/
+    sudo git clone https://github.com/TrinityUniversity/edx-configuration /edx/app/edx_ansible/edx_ansible
+
+Windows: before provisioning, follow instructions in https://github.com/edx/edx-platform/wiki/Simplified-install-with-vagrant#dealing-with-line-endings-and-symlinks-under-windows
 
 We are now ready to provision our machine (from the host)::
     
